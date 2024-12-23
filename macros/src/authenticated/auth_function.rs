@@ -1,8 +1,7 @@
-use proc_macro2::{Ident, TokenStream};
+use proc_macro2::{Span, Ident, TokenStream};
 use quote::{quote, ToTokens};
 use syn::{
-    punctuated::Punctuated, token::Comma, Block, FnArg, ItemFn, Pat, PatType, Signature, Stmt,
-    Type, Visibility,
+    punctuated::Punctuated, token::Comma, Block, FnArg, ItemFn, Pat, PatType, Signature, Stmt, Type, Visibility
 };
 
 #[derive(Clone)]
@@ -34,20 +33,23 @@ pub(crate) struct AuthFunction {
     visibility: Visibility,
     fn_name: Ident,
     boxed_auth_token: BoxedAuthToken,
+    session_name: Ident,
     other_params: Vec<FnArg>,
     orig_sig: Signature,
     orig_block: Box<Block>,
 }
+
 
 impl AuthFunction {
     pub(crate) fn new(ast_input: ItemFn) -> syn::Result<Self> {
         let ast = ast_input.clone();
         let mut box_dyn_auth_token_param = None;
         let mut others = vec![];
+        let mut session_name = Ident::new("x_used_session_name", Span::call_site());
 
         for param in ast.sig.inputs.iter() {
             if let FnArg::Typed(param_type) = param {
-                if simple_type_check_is_box_dyn_auth_token(&*param_type.ty) {
+                if super_simple_unstable_type_check(&*param_type.ty,"Box<dynAuthToken>") {
                     box_dyn_auth_token_param =
                         match BoxedAuthToken::new(ast.clone(), param.clone(), param_type.clone()) {
                             Ok(boxed_token) => Some(boxed_token),
@@ -55,14 +57,24 @@ impl AuthFunction {
                                 return Err(e);
                             }
                         };
-
-                    // ToDo: check if session already exists in param list !!
-                    others.push(syn::parse_quote!(session: types::Session));
                 } else {
                     others.push(param.clone());
                 }
             }
         }
+
+        // ToDo: check if session already exists in param list !!
+        if let Some(session_arg) = get_session_from_args(&others) {
+            if let FnArg::Typed(typed_session_arg) = session_arg {
+                if let Pat::Ident(ident) = &*typed_session_arg.pat {
+                    session_name = ident.ident.clone();
+                }
+            }
+        } else {
+            // TODO: create from variable 'session_name'
+            others.push(syn::parse_quote!(x_used_session_name: types::Session));
+        }
+
 
         match box_dyn_auth_token_param {
             Some(boxed_auth_token) => Ok(AuthFunction {
@@ -72,6 +84,7 @@ impl AuthFunction {
                 other_params: others,
                 orig_sig: ast.sig,
                 orig_block: ast.block,
+                session_name,
             }),
             None => Err(syn::Error::new_spanned(
                 ast,
@@ -90,6 +103,7 @@ impl ToTokens for AuthFunction {
             other_params,
             mut orig_sig,
             mut orig_block,
+            session_name,
         } = self.clone();
 
         // get new parameter list
@@ -99,11 +113,12 @@ impl ToTokens for AuthFunction {
         }
         orig_sig.inputs = param_list;
 
+
         // pulling arg Box<dyn AuthToken> into body as assignment
         // TODO: if session exists, it could have another name. use that name instead. And generate a more complex
         let var_name = boxed_auth_token.name;
         let init_stmt: Stmt = syn::parse2(quote! {
-            let #var_name: Box<dyn AuthToken> = Box::new(SessionAuthToken::new(session));
+            let #var_name: Box<dyn AuthToken> = Box::new(SessionAuthToken::new(#session_name));
         })
         .expect("Could not parse init token statement: Box<dyn Auth> = Box::new(SessionAuthToken::new(session))");
 
@@ -118,6 +133,16 @@ impl ToTokens for AuthFunction {
     }
 }
 
+
+fn get_session_from_args(params: &Vec<FnArg>) -> Option<&FnArg> {
+    params.iter().find(|&el| {
+        if let FnArg::Typed(param_type) = el {
+            return super_simple_unstable_type_check(&*param_type.ty, "Session");
+        }
+        return false;
+     })
+}
+
 fn add_statement_to_block(stmt: Stmt, mut block: Box<Block>) -> Box<Block> {
     let mut stmts_with_init_auth_token = Vec::new();
     stmts_with_init_auth_token.push(stmt);
@@ -129,9 +154,11 @@ fn add_statement_to_block(stmt: Stmt, mut block: Box<Block>) -> Box<Block> {
     block
 }
 
-fn simple_type_check_is_box_dyn_auth_token(t: &Type) -> bool {
+fn super_simple_unstable_type_check(t: &Type, type_compare: &str) -> bool {
     // Just for testing.
     let as_string = t.to_token_stream().to_string().replace(' ', "");
+    println!("check type: {as_string}");
 
-    as_string == "Box<dynAuthToken>"
+    as_string == type_compare
 }
+
