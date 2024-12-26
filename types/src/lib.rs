@@ -31,3 +31,4 @@ impl AuthToken for SessionAuthToken {
 pub trait AuthToken {
     fn is_authenticated(&self) -> bool; 
 }
+

@@ -16,8 +16,9 @@ pub struct AnyOther {
 //     }
 // }
 
+
 #[authenticated]
-pub fn before_do_stuff_with_session(a_token: Box<dyn AuthToken>, _some_session: Session, any: AnyOther) -> bool {
+pub fn before_do_stuff_with_session(a_token: Box<dyn AuthToken>, _some_session: ::types::Session, any: AnyOther) -> bool {
     if a_token.is_authenticated() {
         println!("Yes, you are authenticated !!! Any = {}", any.name);
         return true;

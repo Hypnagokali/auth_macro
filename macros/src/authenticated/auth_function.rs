@@ -1,8 +1,14 @@
 use proc_macro2::{Span, Ident, TokenStream};
 use quote::{quote, ToTokens};
+use regex::Regex;
 use syn::{
     punctuated::Punctuated, token::Comma, Block, FnArg, ItemFn, Pat, PatType, Signature, Stmt, Type, Visibility
 };
+
+
+const SESSION_PATH: &str = r"^(::)?(\s*types\s*::)?\s*Session$";
+const BOXED_AUTH_TOKEN_PATH: &str = r"^Box\s*<\s*dyn(\s*::)?(\s*types\s*::)?\s*AuthToken\s*>$";
+
 
 #[derive(Clone)]
 #[allow(dead_code)]
@@ -49,7 +55,7 @@ impl AuthFunction {
 
         for param in ast.sig.inputs.iter() {
             if let FnArg::Typed(param_type) = param {
-                if super_simple_unstable_type_check(&*param_type.ty,"Box<dynAuthToken>") {
+                if super_simple_unstable_type_check(&*param_type.ty,BOXED_AUTH_TOKEN_PATH) {
                     box_dyn_auth_token_param =
                         match BoxedAuthToken::new(ast.clone(), param.clone(), param_type.clone()) {
                             Ok(boxed_token) => Some(boxed_token),
@@ -137,7 +143,7 @@ impl ToTokens for AuthFunction {
 fn get_session_from_args(params: &Vec<FnArg>) -> Option<&FnArg> {
     params.iter().find(|&el| {
         if let FnArg::Typed(param_type) = el {
-            return super_simple_unstable_type_check(&*param_type.ty, "Session");
+            return super_simple_unstable_type_check(&*param_type.ty, SESSION_PATH);
         }
         return false;
      })
@@ -156,9 +162,10 @@ fn add_statement_to_block(stmt: Stmt, mut block: Box<Block>) -> Box<Block> {
 
 fn super_simple_unstable_type_check(t: &Type, type_compare: &str) -> bool {
     // Just for testing.
-    let as_string = t.to_token_stream().to_string().replace(' ', "");
-    println!("check type: {as_string}");
+    let as_string = t.to_token_stream().to_string();
+    let re = Regex::new(type_compare).unwrap();
 
-    as_string == type_compare
+    re.is_match(&as_string)
 }
+
 
